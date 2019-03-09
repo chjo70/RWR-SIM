@@ -14,14 +14,22 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 
+// 사용자 클래스 추가
+using BitField;
+using Invoke.Commons;
+
 
 namespace RWR_SIM
 {
 
     enum REQ_MESSAGE 
     {
-        REQ_INIT = 1,
-        REQ_SYSTEMVARIABLE
+        // 운용 제어
+        REQ_INIT = 0x01,
+
+        //
+        REQ_SYSTEMVARIABLE,
+
     }
 
     enum RES_MESSAGE
@@ -58,8 +66,11 @@ namespace RWR_SIM
     {
         bool m_bButtonStat=false;
         CServer m_theServer;
+        uint m_nListRows = 1;
 
         public static Form1 _Form1;
+
+
 
         public Form1()
         {
@@ -71,6 +82,28 @@ namespace RWR_SIM
         private void Form1_Load(object sender, EventArgs e)
         {
 
+            // 로그 목록창 업데이트
+            // Set the view to show details.
+            //listViewLog.View = View.Details;
+            // Allow the user to edit item text.
+            //listViewLog.LabelEdit = true;
+            // Allow the user to rearrange columns.
+            //listViewLog.AllowColumnReorder = true;
+            // Display check boxes.
+            //listViewLog.CheckBoxes = true;
+            // Select the item and subitems when selection is made.
+            //listViewLog.FullRowSelect = true;
+            // Display grid lines.
+            //listViewLog.GridLines = true;
+            // Sort the items in the list in ascending order.
+            //listViewLog.Sorting = SortOrder.Ascending;
+
+            //listViewLog.Columns.Add("번호");
+            //listViewLog.Columns.Add("날짜", 50 );
+            //listViewLog.Columns.Add("명령어", 70 );
+            //listViewLog.Columns.Add("내용", 500 );
+
+            // 상태 바 업데이트
             DisplayStringInStatusBar();
 
             m_theServer = new CServer();
@@ -108,6 +141,38 @@ namespace RWR_SIM
             m_theServer.Close();
         }
 
+        public void LogMessagePrint( uint uiCommandCode)
+        {
+            DateTime dt;
+            string strCommandCode;
+            ListViewItem newItem = new ListViewItem();
+
+
+            //listViewLog.BeginUpdate();
+            newItem.Text = m_nListRows.ToString();
+            //newItem.SubItems.Add( m_nListRows.ToString() );
+
+            dt = DateTime.Now;
+            newItem.SubItems.Add(dt.ToString("HH:mm:ss.ff"));
+            switch ( uiCommandCode )
+            {
+                case (int)REQ_MESSAGE.REQ_INIT:
+                    //strCommandCode = string.Format( "REQ_INIT:0x{X4}", uiCommandCode );
+                    strCommandCode = string.Format("REQ_INIT:");
+                    newItem.SubItems.Add( strCommandCode );
+                    break;
+
+                default:
+                    break;
+            }
+
+            listViewLog.Items.Add(newItem);
+            //listViewLog.EndUpdate();
+
+            ++m_nListRows;
+
+        }
+
     }
 
 
@@ -119,6 +184,10 @@ namespace RWR_SIM
 
         private TcpListener m_theClient;
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <returns></returns>
         public void ListenerThread()
         {
             IPAddress localAddr = IPAddress.Parse("127.0.0.1");
@@ -159,17 +228,36 @@ namespace RWR_SIM
 
     }
 
+    [BitFieldNumberOfBitsAttribute(8)]
+    struct ExampleBitField : IBitField
+    {
+        [BitFieldInfo(0, 1)]
+        public bool Bit1 { get; set; }
+        [BitFieldInfo(1, 1)]
+        public byte Bit2 { get; set; }
+        [BitFieldInfo(2, 2)]
+        public byte TwoBits { get; set; }
+        [BitFieldInfo(4, 4)]
+        public byte FourBits { get; set; }
+    }
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
     struct DataPacket
     {
-        [MarshalAs(UnmanagedType.I2)]
-        public ushort opCode;
+        [MarshalAs(UnmanagedType.I1)]
+        public byte bySource;
+
+        [MarshalAs(UnmanagedType.I1)]
+        public byte byDestnation;
 
         [MarshalAs(UnmanagedType.I2)]
-        public ushort dataLength;
+        public ushort usCommandCode;
 
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 20)]
-        public string Subject;
+        [MarshalAs(UnmanagedType.I4)]
+        public uint uiDataLength;
+
+        //[MarshalAs(UnmanagedType.ByValTStr, SizeConst = 20)]
+        //public string Subject;
 
         // Calling this method will return a byte array with the contents
         // of the struct ready to be sent via the tcp socket.
@@ -224,7 +312,7 @@ namespace RWR_SIM
 
                 try
                 {
-                    int ret = m_theNS.Read(cData, 0, Marshal.SizeOf(typeof(STRHeader)) );
+                    int ret = m_theNS.Read(cData, 0, Marshal.SizeOf(typeof(DataPacket)) );
 
                     m_theRecvPacket.Deserialize(ref cData);
 
@@ -261,19 +349,31 @@ namespace RWR_SIM
         {
             byte[] buffer;
 
-            switch (m_theRecvPacket.opCode)
+
+            Form1._Form1.LogMessagePrint(m_theRecvPacket.usCommandCode);
+
+            m_theSendvPacket.bySource = 0;
+            m_theSendvPacket.byDestnation = 0;
+            switch (m_theRecvPacket.usCommandCode)
             {
 
                 case (int) REQ_MESSAGE.REQ_INIT:
-                    m_theSendvPacket.opCode = (int) RES_MESSAGE.RES_INIT;
-                    m_theSendvPacket.dataLength = 0;
-                    buffer = m_theSendvPacket.Serialize();
-                    m_theNS.Write(buffer, 0, Marshal.SizeOf(typeof(STRHeader)));
+                    m_theSendvPacket.usCommandCode = (int) RES_MESSAGE.RES_INIT;
+                    m_theSendvPacket.uiDataLength = 0;
+                    break;
+
+                case (int)REQ_MESSAGE.REQ_SYSTEMVARIABLE:
+                    m_theSendvPacket.usCommandCode = (int)RES_MESSAGE.RES_SYSTEMVARIABLE;
+                    m_theSendvPacket.uiDataLength = 0;
                     break;
 
                 default :
                     break;
             }
+
+            buffer = m_theSendvPacket.Serialize();
+            m_theNS.Write(buffer, 0, Marshal.SizeOf(typeof(DataPacket)));
+
         }
     }
 
